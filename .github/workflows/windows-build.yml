@@ -24,23 +24,33 @@ jobs:
           submodules: recursive
 
       - name: Configure build environment
+        shell: powershell
         run: |
-          # ✨ 核心修复：如果是 windows-latest (VS2022)，优先用 vs2022 的模板；否则退回 vs2019
+          # 1. 检查是否存在针对 VS2022 的环境配置文件，没有则回退到 VS2019
           if (Test-Path "env.vs2022.bat") {
-              copy env.vs2022.bat env.bat
+              Copy-Item "env.vs2022.bat" -Destination "env.bat" -Force
+              Write-Host "已成功复制 env.vs2022.bat 到 env.bat"
           } else {
-              copy env.vs2019.bat env.bat
+              Copy-Item "env.vs2019.bat" -Destination "env.bat" -Force
+              Write-Host "未找到 env.vs2022.bat，已回退复制 env.vs2019.bat"
           }
           
-          # 🚨 核心修复：将你预设的云端 BOOST_ROOT 强行灌入 env.bat 末尾，防止被覆盖丢失
-          echo set BOOST_ROOT=${{ env.BOOST_ROOT }} >> env.bat
-          echo set BOOST_LIBRARYDIR=${{ env.BOOST_ROOT }}\stage\lib >> env.bat
+          # 2. 用安全的方式将 BOOST 环境变量追加写入 env.bat 的末尾
+          $boostRoot = "${{ env.BOOST_ROOT }}"
+          $boostLib = "${{ env.BOOST_ROOT }}\stage\lib"
           
-          # 查看一下最终的 env.bat，确保路径正确
-          type env.bat
+          Add-Content -Path "env.bat" -Value "`nset BOOST_ROOT=$boostRoot"
+          Add-Content -Path "env.bat" -Value "set BOOST_LIBRARYDIR=$boostLib"
+          
+          # 3. 打印最终合成的 env.bat 内容，确保调试可见
+          Write-Host "=== 最终生成的 env.bat 内容 ==="
+          Get-Content "env.bat"
+          Write-Host "=============================="
 
+          # 4. 注册 Git 提交版本信息
           $git_ref_name = git describe --always
-          echo "git_ref_name=$git_ref_name" >> $env:GITHUB_ENV
+          "git_ref_name=$git_ref_name" | Out-File -FilePath $env:GITHUB_ENV -Append
+
 
       - name: Cache Boost
         id: cache-boost

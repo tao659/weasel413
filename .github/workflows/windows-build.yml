@@ -14,11 +14,13 @@ jobs:
     runs-on: windows-latest
     env:
       boost_version: 1.83.0
+      # 🚀 1. 顶层明确定义好绝对路径
       BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_83_0
+      BOOST_LIBRARYDIR: ${{ github.workspace }}\deps\boost_1_83_0\stage\lib
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
     steps:
       - name: Checkout last commit
-        uses: actions/checkout@v4  # 🚀 推荐升级到 v4
+        uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
           submodules: recursive
@@ -26,35 +28,23 @@ jobs:
       - name: Configure build environment
         shell: powershell
         run: |
-          # 1. 检查是否存在针对 VS2022 的环境配置文件，没有则回退到 VS2019
+          # 2. 检查是否存在针对 VS2022 的环境配置文件，没有则回退到 VS2019
           if (Test-Path "env.vs2022.bat") {
               Copy-Item "env.vs2022.bat" -Destination "env.bat" -Force
-              Write-Host "已成功复制 env.vs2022.bat 到 env.bat"
           } else {
               Copy-Item "env.vs2019.bat" -Destination "env.bat" -Force
-              Write-Host "未找到 env.vs2022.bat，已回退复制 env.vs2019.bat"
           }
           
-          # 2. 用安全的方式将 BOOST 环境变量追加写入 env.bat 的末尾
-          $boostRoot = "${{ env.BOOST_ROOT }}"
-          $boostLib = "${{ env.BOOST_ROOT }}\stage\lib"
-          
-          Add-Content -Path "env.bat" -Value "`nset BOOST_ROOT=$boostRoot"
-          Add-Content -Path "env.bat" -Value "set BOOST_LIBRARYDIR=$boostLib"
-          
-          # 3. 打印最终合成的 env.bat 内容，确保调试可见
-          Write-Host "=== 最终生成的 env.bat 内容 ==="
-          Get-Content "env.bat"
-          Write-Host "=============================="
+          # 🚀 3. 核心大招：强行写入 GITHUB_ENV 全局环境，这样后续每一个独立的步骤启动时，Windows 都会自带这两个环境变量！
+          "BOOST_ROOT=${{ env.BOOST_ROOT }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "BOOST_LIBRARYDIR=${{ env.BOOST_LIBRARYDIR }}" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-          # 4. 注册 Git 提交版本信息
           $git_ref_name = git describe --always
           "git_ref_name=$git_ref_name" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-
       - name: Cache Boost
         id: cache-boost
-        uses: actions/cache@v4  # 🚀 推荐升级到 v4
+        uses: actions/cache@v4
         with:
           path: |
             ${{ env.BOOST_ROOT }}
@@ -62,14 +52,19 @@ jobs:
 
       - name: Install Boost
         if: steps.cache-boost.outputs.cache-hit != 'true'
-        run: .\install_boost.bat
+        shell: cmd
+        run: |
+          # 🚀 4. 在单独的 cmd 运行环境里，调用前先强行 set 变量保活，防止 install_boost.bat 内部清空环境
+          set BOOST_ROOT=%BOOST_ROOT%
+          set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR%
+          .\install_boost.bat
 
       - name: Check submodules
         run: git submodule > submodule-status
 
       - name: Cache dependencies
         id: cache-deps
-        uses: actions/cache@v4  # 🚀 推荐升级到 v4
+        uses: actions/cache@v4
         with:
           path: |
             librime
@@ -77,18 +72,27 @@ jobs:
           key: ${{ runner.os }}-deps-${{ hashFiles('submodule-status') }}
 
       - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v2 # 🚀 推荐升级到微软官方 v2，更完美支持 VS2022
+        uses: microsoft/setup-msbuild@v2
 
       - name: Build dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: .\build.bat opencc
+        shell: cmd
+        run: |
+          # 🚀 5. 每次编译依赖前，强行将变量再次补写进 env.bat（即使刚刚被 github.install 覆盖过，也能在这一刻纠正回来）
+          echo set BOOST_ROOT=%BOOST_ROOT% >> env.bat
+          echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
+          .\build.bat opencc
 
       - name: Copy Rime files
         run: .\github.install.bat
 
       - name: Build Weasel
         id: build_weasel
+        shell: cmd
         run: |
+          # 🚀 6. 终极小狼毫打包，同样进行最后一次变量的注入和保活
+          echo set BOOST_ROOT=%BOOST_ROOT% >> env.bat
+          echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
           .\build.bat data
           .\build.bat hant
           .\build.bat installer

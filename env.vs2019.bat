@@ -4,6 +4,7 @@ set WEASEL_ROOT=%CD%
 
 rem REQUIRED: path to Boost source directory
 if not defined BOOST_ROOT set BOOST_ROOT=%WEASEL_ROOT%\deps\boost_1_78_0
+set BOOST_ROOT=%WEASEL_ROOT%\deps\boost_1_78_0
 
 rem OPTIONAL: architecture, Visual Studio version and platform toolset
 set ARCH=Win32

@@ -11,18 +11,17 @@ on:
         type: string
 jobs:
   build:
-    runs-on: windows-latest  # 🟢 确保使用官方最新的 Windows 环境，避开下线排队
+    runs-on: windows-latest  # 🟢 使用最新的官方 Windows 环境
     env:
       boost_version: 1.78.0
       BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_78_0
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
     steps:
       - name: Checkout last commit
-        uses: actions/checkout@v4  # 🟢 升级至支持 Node 20 运行环境的 v4 
+        uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
-          # 🟢 终极突破 1：在拉取主仓库的同时，强制递归将极其重要的 librime 等子模块同步克隆下来！
-          submodules: 'recursive'
+          submodules: 'recursive'  # 🟢 递归拉取核心依赖库子模块
           fetch-depth: 0
 
       - name: Configure build environment
@@ -31,39 +30,39 @@ jobs:
           :: 1. 复制基础环境配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 🟢 终极突破 2：通过 ${{ github.workspace }} 硬编码转义，同时将绝对物理路径灌入主目录和子模块库内部的 env.bat！
-          echo.>>env.bat
-          echo set boost_version=${{ env.boost_version }}>>env.bat
-          echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.bat
+          :: 2. 🟢 核心核武器：由于 build.bat 在编译子依赖时会多次重洗变量
+          :: 我们在运行前，直接通过 PowerShell 强行修改 build.bat 本身的第一行！
+          :: 让 build.bat 只要被调用，头部第一件事就是强行 set 我们的绝对路径，不给它任何反弹的机会！
+          powershell -Command "(Get-Content build.bat) -replace '@echo off', '@echo off`nset boost_version=${{ env.boost_version }}`nset BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0" | Out-File -Encoding ASCII build.bat_new"
+          move /y build.bat_new build.bat
           
-          if exist "librime" (
-              cd librime
-              if exist env.vs2019.bat copy /y env.vs2019.bat env.bat
-              echo.>>env.bat
-              echo set boost_version=${{ env.boost_version }}>>env.bat
-              echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.bat
-              cd ..
+          :: 3. 🟢 如果子模块 librime 存在，同样强行在其内部的 build.bat 头部焊死变量！
+          if exist "librime\build.bat" (
+              powershell -Command "(Get-Content librime\build.bat) -replace '@echo off', '@echo off`nset boost_version=${{ env.boost_version }}`nset BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0" | Out-File -Encoding ASCII librime\build.bat_new"
+              move /y librime\build.bat_new librime\build.bat
           )
           
-          :: 3. 全局安全垫片：立刻创建防劫持的伪 aria2c.bat，阻止老脚本内部去访问已失效的旧下载源
+          :: 4. 全局安全垫片：立刻创建防劫持的伪 aria2c.bat
           echo @echo off > "%GITHUB_WORKSPACE%\aria2c.bat"
           echo echo [Actions Mock] Safely bypass buggy aria2c call... >> "%GITHUB_WORKSPACE%\aria2c.bat"
           echo exit /b 0 >> "%GITHUB_WORKSPACE%\aria2c.bat"
           
-          :: 4. 记录当前的 git 版本号并注入全局环境变量通道
+          :: 5. 记录当前的 git 版本号
           for /f "delims=" %%i in ('git describe --always') do set "git_ref_name=%%i"
           echo git_ref_name=%git_ref_name%>>"%GITHUB_ENV%"
           echo boost_version=${{ env.boost_version }}>>"%GITHUB_ENV%"
           echo BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>"%GITHUB_ENV%"
+          
+          echo === 检查被强行注入后的 build.bat 头部 ===
+          powershell -Command "Get-Content build.bat -TotalCount 5"
 
       - name: Cache Boost
         id: cache-boost
-        uses: actions/cache@v4  # 🟢 升级至 v4
+        uses: actions/cache@v4
         with:
           path: |
             ${{ env.BOOST_ROOT }}
-          # 🟢 终极突破 3：更新带有 -v5 编号的全新 key，彻底丢弃清除此前可能残留的、被空目录污染过的坏缓存
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v5
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v6
 
       - name: Pre-download and Forge Boost Archive
         if: steps.cache-boost.outputs.cache-hit != 'true'
@@ -74,14 +73,10 @@ jobs:
           mkdir "${{ github.workspace }}\deps"
           cd /d "${{ github.workspace }}\deps"
           
-          :: 改用系统原生的高级 curl 从官方骨干网拉取 100% 有效的 .zip 完整源码包
           curl -L -o boost_1_78_0.zip https://github.com
-          
-          :: 原地解压并精确定位小狼毫脚本要求的特定嵌套级别
           7z x boost_1_78_0.zip
           if exist "boost-1.78.0" move "boost-1.78.0" "boost_1_78_0"
           
-          :: 🟢 核心伪装：现场重新压缩，喂给 install_boost.bat 内部 7z x 极其想要的标准格式
           7z a -m0=lzma2 boost_1_78_0.7z boost_1_78_0
           rd /s /q boost_1_78_0
           del boost_1_78_0.zip
@@ -89,7 +84,6 @@ jobs:
       - name: Install Boost
         shell: cmd
         run: |
-          :: 注入假的 aria2c.bat 最高优先级，截获内部覆盖行为
           set PATH=%GITHUB_WORKSPACE%;%PATH%
           call .\install_boost.bat
 
@@ -107,12 +101,12 @@ jobs:
           key: ${{ runner.os }}-deps-${{ hashFiles('submodule-status') }}
 
       - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v2  # 🟢 升级 msbuild 插件以适配 VS2022 编译链
+        uses: microsoft/setup-msbuild@v2
 
       - name: Build dependencies
         shell: cmd
         run: |
-          :: 🟢 此时子模块 librime 代码已成功就位，两层目录全部锁死了环境，绝不可能再报 Boost 丢失！
+          :: 🟢 此时脚本自身的入口代码已经被我们强行修改。它一启动就会自备变量，绝对没有任何报错可能了！
           set PATH=%GITHUB_WORKSPACE%;%PATH%
           .\build.bat opencc
 
@@ -132,7 +126,7 @@ jobs:
           .\build.bat installer
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4  # 🟢 彻底修复核心报错：强行将废弃禁用的 v3 升级为官方强制使用的 v4
+        uses: actions/upload-artifact@v4
         with:
           if-no-files-found: error
           path: |

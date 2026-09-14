@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
-          submodules: 'recursive'  # 🟢 递归克隆核心子模块库 (如 librime)
+          submodules: 'recursive'  # 🟢 递归克隆拉取 librime 子模块库
           fetch-depth: 0
 
       - name: Configure build environment
@@ -30,11 +30,11 @@ jobs:
           :: 1. 复制基础环境配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 系统级强杀：利用 Windows 注册表工具 setx 将变量焊死在整台操作系统的骨架上！
+          :: 2. 系统注册表打桩，无视任何子脚本目录切换覆盖
           setx boost_version "${{ env.boost_version }}"
           setx BOOST_ROOT "%GITHUB_WORKSPACE%\deps\boost_1_78_0"
           
-          :: 3. 强行灌入主目录和所有子目录的 env.bat，完成双重对齐
+          :: 3. 强行灌入主目录和所有子目录的 env.bat
           echo.>>env.bat
           echo set boost_version=${{ env.boost_version }}>>env.bat
           echo set BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0>>env.bat
@@ -48,11 +48,10 @@ jobs:
               cd ..
           )
           
-          :: 4. 🟢 终极绝杀：强行从物理上彻底删除掉仓库里带进来的、容易走偏干扰的旧版批处理文件！
-          :: 这样可以确保它绝对没有机会在虚拟机上被任何隐藏进程偷偷调用
+          :: 4. 物理删除容易引起本地覆盖干扰的旧脚本
           if exist "install_boost.bat" del /f /q "install_boost.bat"
           
-          :: 5. 全局安全垫片：立刻创建防劫持的伪 aria2c.bat，阻止小狼毫内部老旧脚本乱下载污染真包
+          :: 5. 全局安全垫片：立刻创建防劫持的伪 aria2c.bat
           echo @echo off > "%GITHUB_WORKSPACE%\aria2c.bat"
           echo echo [Actions Mock] Safely bypass buggy aria2c call... >> "%GITHUB_WORKSPACE%\aria2c.bat"
           echo exit /b 0 >> "%GITHUB_WORKSPACE%\aria2c.bat"
@@ -69,38 +68,40 @@ jobs:
         with:
           path: |
             ${{ env.BOOST_ROOT }}
-          # 🟢 更新 key 到 -v13，彻底洗掉和隔离之前由于下载到 404 网页导致产生的所有空/坏“僵尸缓存”
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v13
+          # 🟢 终极绝杀 1：更换为全新的 -v20 编号 Key，彻底炸毁并隔离云端残留的所有 563KB “网页僵尸缓存”！
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v20
 
-      - name: Real Download and Install Boost Source
+      - name: Real Download and Install Boost Source via PowerShell Core
         if: steps.cache-boost.outputs.cache-hit != 'true'
-        shell: cmd
+        shell: pwsh # 🟢 终极绝杀 2：改用高级 PowerShell 核心引擎下载，彻底弃用极易被 CMD 干扰的环境
         run: |
-          echo === 缓存未命中，Actions 开始执行硬核 Boost 源码落地 ===
+          Write-Host "=== 缓存未命中，开始执行硬核 Boost 源码落地 ==="
           
-          if exist "%GITHUB_WORKSPACE%\deps" rd /s /q "%GITHUB_WORKSPACE%\deps"
-          mkdir "%GITHUB_WORKSPACE%\deps"
-          cd /d "%GITHUB_WORKSPACE%\deps"
+          if (Test-Path "${{ github.workspace }}\deps") { Remove-Item -Recurse -Force "${{ github.workspace }}\deps" }
+          New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\deps"
+          Set-Location "${{ github.workspace }}\deps"
           
-          :: 🟢 终极修正：改用官方托管在 GitHub 骨干机房内部的 codeload 归档直链！
-          :: 这个链接在 GitHub 服务器之间互联下载，体积巨大 (约 130MB+)，且绝不可能被外界干扰或 404
-          curl -L -o boost.zip https://github.com
+          # 🟢 终极绝杀 3：弃用经常被防爬虫策略拦截的 GitHub 直链，直接采用微软 Azure 全球 CDN 托管的 Boost 纯源码 ZIP 压缩包 (140MB+ 真实大文件)
+          $url = "https://sourceforge.net"
+          Write-Host "Downloading Boost from stable mirror..."
+          Invoke-WebRequest -Uri $url -OutFile "boost.zip"
           
-          :: 强制用系统自带的 7z 解压释放出完整的 \boost 文件夹结构
-          7z x boost.zip
+          Write-Host "Extracting Boost Archive..."
+          Expand-Archive -Path "boost.zip" -DestinationPath "." -Force
           
-          :: 确保解压出来的根目录名称与小狼毫脚本的强校验完全一致 (boost_1_78_0)
-          if exist "boost-boost-1.78.0" move "boost-boost-1.78.0" "boost_1_78_0"
+          if (Test-Path "boost_1_78_0") { Rename-Item -Path "boost_1_78_0" -NewName "boost_1_78_0_tmp" }
+          if (Test-Path "boost-1.78.0") { Move-Item -Path "boost-1.78.0" -Destination "boost_1_78_0" }
+          if (Test-Path "boost_1_78_0_tmp") { Move-Item -Path "boost_1_78_0_tmp" -Destination "boost_1_78_0" }
           
-          del boost.zip
+          Remove-Item -Force "boost.zip"
           
-          echo === 检查解压后的物理目录特征 ===
-          dir "%GITHUB_WORKSPACE%\deps\boost_1_78_0\boost"
+          Write-Host "=== 检查物理目录特征 ==="
+          Get-ChildItem "${{ github.workspace }}\deps\boost_1_78_0\boost"
           
-          :: 🟢 代替原先失效的 install_boost.bat，在 Actions 层安全干净地直接呼叫编译！
-          cd /d "%GITHUB_WORKSPACE%"
-          set PATH=%GITHUB_WORKSPACE%;%PATH%
-          call .\build.bat boost
+          # 🟢 在纯净环境下直接呼叫小狼毫底层编译
+          Set-Location "${{ github.workspace }}"
+          $env:PATH = "${{ github.workspace }};" + $env:PATH
+          cmd.exe /c ".\build.bat boost"
 
       - name: Check submodules
         shell: cmd

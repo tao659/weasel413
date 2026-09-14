@@ -14,7 +14,7 @@ jobs:
     runs-on: windows-latest
     env:
       boost_version: 1.83.0
-      # 🚀 1. 明确定义绝对路径
+      # 🚀 1. 强制设定为构建目录下的绝对路径
       BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_83_0
       BOOST_LIBRARYDIR: ${{ github.workspace }}\deps\boost_1_83_0\stage\lib
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
@@ -25,33 +25,20 @@ jobs:
           repository: ${{ inputs.repository }}
           submodules: recursive
 
-      - name: Configure build environment & Patch build.bat
+      - name: Configure build environment
         shell: powershell
         run: |
-          # 2. 拷贝环境模板
+          # 2. 优先拷贝 VS2022 的环境模板
           if (Test-Path "env.vs2022.bat") {
               Copy-Item "env.vs2022.bat" -Destination "env.bat" -Force
           } else {
               Copy-Item "env.vs2019.bat" -Destination "env.bat" -Force
           }
           
-          # 3. 往 env.bat 追加正确的路径
-          Add-Content -Path "env.bat" -Value "`nset BOOST_ROOT=${{ env.BOOST_ROOT }}"
-          Add-Content -Path "env.bat" -Value "set BOOST_LIBRARYDIR=${{ env.BOOST_LIBRARYDIR }}"
-
-          # 🚀 4. 终极修复：用正则表达式直接干掉 build.bat 里那段烦人的 Boost 强效校验
-          # 它会把 "if not exist %BOOST_ROOT%\boost\version.hpp" 这一整段报错逻辑直接变成回显（echo），使其永远不会退出错误
-          if (Test-Path "build.bat") {
-              $buildBat = Get-Content "build.bat" -Raw
-              # 将检测 version.hpp 失败后直接 exit 的逻辑，替换为普通的 echo 提示
-              $patchedBat = $buildBat -replace 'if not exist %BOOST_ROOT%\\boost\\version.hpp\s*\(\s*echo Error: Boost not found.*?\s*exit /b 1\s*\)', 'echo Boost pre-check bypassed by CI'
-              $patchedBat | Out-File -FilePath "build.bat" -Encoding ascii -Force
-              Write-Host "已成功给 build.bat 注入补丁，彻底关闭了强行阻断机制！"
-          }
-
-          # 5. 注册全局变量
+          # 3. 将变量直接挂载到系统级 GITHUB_ENV
           "BOOST_ROOT=${{ env.BOOST_ROOT }}" | Out-File -FilePath $env:GITHUB_ENV -Append
           "BOOST_LIBRARYDIR=${{ env.BOOST_LIBRARYDIR }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+
           $git_ref_name = git describe --always
           "git_ref_name=$git_ref_name" | Out-File -FilePath $env:GITHUB_ENV -Append
 
@@ -63,13 +50,36 @@ jobs:
             ${{ env.BOOST_ROOT }}
           key: ${{ runner.os }}-boost-${{ env.boost_version }}
 
-      # 🚀 6. 如果缓存没有命中，我们先手动帮它建好文件夹，确保万无一失
-      - name: Install Boost
+      # 🚀 4. 【核心终极修复】：如果缓存未命中，用 PowerShell 绝对稳定地直接下载并安置好 Boost！
+      # 这样可以彻底弃用极其不稳定的 `.\install_boost.bat`，保证 version.hpp 100% 存在
+      - name: Download and Force Extract Boost (CI Native)
         if: steps.cache-boost.outputs.cache-hit != 'true'
-        shell: cmd
+        shell: powershell
         run: |
-          if not exist "${{ env.BOOST_ROOT }}" mkdir "${{ env.BOOST_ROOT }}"
-          .\install_boost.bat
+          $targetDir = "${{ env.BOOST_ROOT }}"
+          if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir }
+          
+          Write-Host "正在通过云端高宽带下载 Boost 1.83.0..."
+          $url = "https://jfrog.io"
+          $zipPath = "$env:TEMP\boost.zip"
+          
+          # 下载
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          
+          Write-Host "下载完成，正在解压到 deps 目录..."
+          # 解压到临时目录，再把内容移过去，确保根目录结构完美吻合
+          $extractTemp = "$env:TEMP\boost_extract"
+          Expand-Archive -Path $zipPath -DestinationPath $extractTemp -Force
+          
+          # 将解压出来的内部实际内容移动到指定的 $targetDir 
+          Copy-Item -Path "$extractTemp\boost_1_83_0\*" -Destination $targetDir -Recurse -Force
+          
+          # 验证实体文件是否真正存在
+          if (Test-Path "$targetDir\boost\version.hpp") {
+              Write-Host "🎉 Boost 实体文件验证成功！物理路径已准备就绪。"
+          } else {
+              Write-Error "解压结构有误，未能在指定位置发现 version.hpp"
+          }
 
       - name: Check submodules
         run: git submodule > submodule-status
@@ -86,19 +96,25 @@ jobs:
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v2
 
+      # 🚀 5. 在每一次实际调用小狼毫编译前，通过命令行就地将路径压入临时的 env.bat
       - name: Build dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: cmd
         run: |
+          echo set BOOST_ROOT=%BOOST_ROOT% > env.bat
+          echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
           .\build.bat opencc
 
       - name: Copy Rime files
         run: .\github.install.bat
 
+      # 🚀 6. 终极小狼毫打包
       - name: Build Weasel
         id: build_weasel
         shell: cmd
         run: |
+          echo set BOOST_ROOT=%BOOST_ROOT% > env.bat
+          echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
           .\build.bat data
           .\build.bat hant
           .\build.bat installer

@@ -29,14 +29,18 @@ jobs:
           :: 1. 复制基础配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 将绝对路径写入 env.bat，确保后续所有编译子脚本格式对齐
+          :: 2. 🟢 核心修复：使用 ${{ github.workspace }} 在 Actions 解析期就把绝对路径字符串死死写进 env.bat
+          :: 这样生成的 env.bat 里就不会包含任何可能在跨步骤时失效的 %GITHUB_WORKSPACE% 动态变量
           echo.>>env.bat
           echo set boost_version=${{ env.boost_version }}>>env.bat
-          echo set BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0>>env.bat
+          echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.bat
           
           :: 3. 记录当前的 git 版本号
           for /f "delims=" %%i in ('git describe --always') do set "git_ref_name=%%i"
           echo git_ref_name=%git_ref_name%>>"%GITHUB_ENV%"
+          
+          echo === 检查最终生成的硬编码 env.bat ===
+          type env.bat
 
       - name: Cache Boost
         id: cache-boost
@@ -52,29 +56,23 @@ jobs:
         run: |
           echo === 缓存未命中，在 Actions 层接管下载 ===
           
-          :: 1. 创建物理依赖目录并进入
-          if not exist "%GITHUB_WORKSPACE%\deps" mkdir "%GITHUB_WORKSPACE%\deps"
-          cd "%GITHUB_WORKSPACE%\deps"
+          if not exist "${{ github.workspace }}\deps" mkdir "${{ github.workspace }}\deps"
+          cd /d "${{ github.workspace }}\deps"
           
-          :: 2. 下载官方 100% 真实存在的通用 .zip 源码包 (约 140MB)
+          :: 下载官方通用 .zip 源码包
           curl -L -o boost_1_78_0.zip https://github.com
           
-          :: 3. 用系统自带的 7z 先把 .zip 解压出来
+          :: 解压并重命名符合小狼毫预期的目录
           7z x boost_1_78_0.zip
-          
-          :: 4. 确保解压出来的根目录名称一致
           if exist "boost-1.78.0" move "boost-1.78.0" "boost_1_78_0"
           
-          :: 5. 将解压出来的真实源码文件夹，打包成小狼毫脚本需要的 boost_1_78_0.7z 格式
+          :: 重新打包为 7z
           7z a -m0=lzma2 boost_1_78_0.7z boost_1_78_0
-          
-          :: 6. 清理临时文件夹和 zip 包
           rd /s /q boost_1_78_0
           del boost_1_78_0.zip
           
-          :: 7. 🟢 核心黑魔法：创建一个假的 aria2c.bat，阻止 install_boost.bat 内部去乱下载覆盖我们做好的包
-          :: 把它放在工作流根目录下，这样系统会优先调用它
-          cd "%GITHUB_WORKSPACE%"
+          :: 创建截获用的伪 aria2c.bat
+          cd /d "${{ github.workspace }}"
           echo @echo off > aria2c.bat
           echo echo [Actions Mock] Skipping buggy aria2c download, using pre-downloaded 7z archive... >> aria2c.bat
           echo exit /b 0 >> aria2c.bat
@@ -82,11 +80,8 @@ jobs:
       - name: Install Boost
         shell: cmd
         run: |
-          :: 将当前目录（包含假的 aria2c.bat）强行加入临时环境变量 PATH 的最前面，确保截获 aria2c 调用
+          :: 注入假的 aria2c 路径最高优先级
           set PATH=%CD%;%PATH%
-          
-          :: 执行你的 install_boost.bat
-          :: 此时它内部的 aria2c 命令会被我们秒杀，直接用真包进行 7z 解压并编译！
           call .\install_boost.bat
 
       - name: Check submodules
@@ -106,7 +101,6 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Build dependencies
-        if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: cmd
         run: .\build.bat opencc
 

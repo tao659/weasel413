@@ -11,14 +11,15 @@ on:
         type: string
 jobs:
   build:
-    runs-on: windows-latest  # 🟢 修复1：升级到官方支持的最新 Windows 环境
+    runs-on: windows-latest  # 使用最新的 Windows 环境
     env:
       boost_version: 1.78.0
+      # 🟢 显式将 BOOST_ROOT 绝对路径设为固定的 deps 目录
       BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_78_0
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
     steps:
       - name: Checkout last commit
-        uses: actions/checkout@v4  # 🟢 修复2：升级到 v4
+        uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
           submodules: recursive
@@ -29,21 +30,23 @@ jobs:
           :: 1. 复制环境基础配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 🟢 强行将工作流中的 BOOST_ROOT 写入 env.bat，防止被覆盖
-          echo set BOOST_ROOT=%BOOST_ROOT%>>env.bat
-          echo set boost_version=%boost_version%>>env.bat
+          :: 2. 🟢 核心修复：直接将经过转义、无歧义的绝对路径追加到 env.bat 内部
+          :: 这样无论 build.bat 怎么通过 env.bat 刷新，都能 100% 拿到正确的路径
+          echo.>>env.bat
+          echo set boost_version=${{ env.boost_version }}>>env.bat
+          echo set BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0>>env.bat
           
           :: 3. 记录当前的 git 版本号
           for /f "delims=" %%i in ('git describe --always') do set "git_ref_name=%%i"
           echo git_ref_name=%git_ref_name%>>"%GITHUB_ENV%"
           
-          :: 打印一下 env.bat 的内容，方便在日志中对齐检查
+          :: 打印 env.bat 内容以供日志核对
+          echo === 检查生成的 env.bat 内容 ===
           type env.bat
-
 
       - name: Cache Boost
         id: cache-boost
-        uses: actions/cache@v4  # 🟢 修复2：升级到 v4
+        uses: actions/cache@v4
         with:
           path: |
             ${{ env.BOOST_ROOT }}
@@ -51,17 +54,34 @@ jobs:
 
       - name: Install Boost
         if: steps.cache-boost.outputs.cache-hit != 'true'
-        shell: cmd # 🟢 修复3
-        run: .\install_boost.bat
-
+        shell: cmd
+        run: |
+          :: 🟢 核心修复：确保创建完备的多层物理目录
+          if not exist "%GITHUB_WORKSPACE%\deps" mkdir "%GITHUB_WORKSPACE%\deps"
+          cd "%GITHUB_WORKSPACE%\deps"
+          
+          :: 下载稳定官方包
+          curl -L -o boost.zip https://github.com{{ env.boost_version }}/boost_1_78_0_cmake.zip
+          
+          :: 使用 PowerShell 强制解压到当前目录
+          powershell -Command "Expand-Archive -Path boost.zip -DestinationPath . -Force"
+          
+          :: 小狼毫脚本强校验 %BOOST_ROOT%\boost 目录是否存在
+          :: 如果解压出来名字带 _cmake 尾缀，强行修正为标准名称
+          if exist "boost_${{ env.boost_version }}_cmake" move "boost_${{ env.boost_version }}_cmake" "boost_1_78_0"
+          if exist "boost_1_78_0_cmake" move "boost_1_78_0_cmake" "boost_1_78_0"
+          
+          :: 回到根目录执行编译
+          cd "%GITHUB_WORKSPACE%"
+          call .\install_boost.bat
 
       - name: Check submodules
-        shell: cmd # 🟢 修复3
+        shell: cmd
         run: git submodule > submodule-status
 
       - name: Cache dependencies
         id: cache-deps
-        uses: actions/cache@v4  # 🟢 修复2：升级到 v4
+        uses: actions/cache@v4
         with:
           path: |
             librime
@@ -69,27 +89,27 @@ jobs:
           key: ${{ runner.os }}-deps-${{ hashFiles('submodule-status') }}
 
       - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v2 # 🟢 升级 msbuild 插件以适配新系统环境
+        uses: microsoft/setup-msbuild@v2
 
       - name: Build dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        shell: cmd # 🟢 修复3
+        shell: cmd
         run: .\build.bat opencc
 
       - name: Copy Rime files
-        shell: cmd # 🟢 修复3
+        shell: cmd
         run: .\github.install.bat
 
       - name: Build Weasel
         id: build_weasel
-        shell: cmd # 🟢 修复3
+        shell: cmd
         run: |
           .\build.bat data
           .\build.bat hant
           .\build.bat installer
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4  # 🟢 修复4：彻底解决此报错，升级到 v4
+        uses: actions/upload-artifact@v4
         with:
           if-no-files-found: error
           path: |

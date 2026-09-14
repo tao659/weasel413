@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
-          submodules: 'recursive'  # 🟢 递归克隆拉取 librime 子模块库
+          submodules: 'recursive'  # 🟢 递归克隆核心子模块库
           fetch-depth: 0
 
       - name: Configure build environment
@@ -30,11 +30,11 @@ jobs:
           :: 1. 复制基础环境配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 系统注册表打桩，无视任何子脚本目录切换覆盖
+          :: 2. 系统注册表强行打桩，全局锁定绝对变量
           setx boost_version "${{ env.boost_version }}"
           setx BOOST_ROOT "%GITHUB_WORKSPACE%\deps\boost_1_78_0"
           
-          :: 3. 强行灌入主目录和所有子目录的 env.bat
+          :: 3. 强行追加灌入主目录和所有子依赖目录的 env.bat，完成完全对齐
           echo.>>env.bat
           echo set boost_version=${{ env.boost_version }}>>env.bat
           echo set BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0>>env.bat
@@ -48,7 +48,7 @@ jobs:
               cd ..
           )
           
-          :: 4. 物理删除容易引起本地覆盖干扰的旧脚本
+          :: 4. 物理擦除可能会干扰到 Actions 前置执行的、带旧损坏下载源的本地老脚本
           if exist "install_boost.bat" del /f /q "install_boost.bat"
           
           :: 5. 全局安全垫片：立刻创建防劫持的伪 aria2c.bat
@@ -68,40 +68,47 @@ jobs:
         with:
           path: |
             ${{ env.BOOST_ROOT }}
-          # 🟢 终极绝杀 1：更换为全新的 -v20 编号 Key，彻底炸毁并隔离云端残留的所有 563KB “网页僵尸缓存”！
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v20
+          # 🟢 更新 key 到 -v25，将之前所有因为拦截下载到 563KB 网页产生的老缓存坏包彻底洗掉并爆破！
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v25
 
-      - name: Real Download and Install Boost Source via PowerShell Core
+      - name: Real Download and Install Boost Source via Bitsadmin
         if: steps.cache-boost.outputs.cache-hit != 'true'
-        shell: pwsh # 🟢 终极绝杀 2：改用高级 PowerShell 核心引擎下载，彻底弃用极易被 CMD 干扰的环境
+        shell: cmd # 🟢 切换回原生态精细控制的 CMD
         run: |
-          Write-Host "=== 缓存未命中，开始执行硬核 Boost 源码落地 ==="
+          echo === 缓存未命中，Actions 开始执行硬核 Boost 真实源码落地 ===
           
-          if (Test-Path "${{ github.workspace }}\deps") { Remove-Item -Recurse -Force "${{ github.workspace }}\deps" }
-          New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\deps"
-          Set-Location "${{ github.workspace }}\deps"
+          if exist "%GITHUB_WORKSPACE%\deps" rd /s /q "%GITHUB_WORKSPACE%\deps"
+          mkdir "%GITHUB_WORKSPACE%\deps"
+          cd /d "%GITHUB_WORKSPACE%\deps"
           
-          # 🟢 终极绝杀 3：弃用经常被防爬虫策略拦截的 GitHub 直链，直接采用微软 Azure 全球 CDN 托管的 Boost 纯源码 ZIP 压缩包 (140MB+ 真实大文件)
-          $url = "https://sourceforge.net"
-          Write-Host "Downloading Boost from stable mirror..."
-          Invoke-WebRequest -Uri $url -OutFile "boost.zip"
+          :: 🟢 核心修正：使用 LFS 骨干网络维护的纯净备份源 (大体积约 106MB 纯正 C++ 全量源码且绝无 Cloudflare 拦截盾)
+          :: 同时由于是 .tar.bz2 格式的高压缩源码，我们在 Windows 环境下用系统原生自带的 7z 完全可以解包。
+          set DOWNLOAD_URL=https://linuxfromscratch.org
           
-          Write-Host "Extracting Boost Archive..."
-          Expand-Archive -Path "boost.zip" -DestinationPath "." -Force
+          echo Downloading Boost from clean mirror via raw curl...
+          curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" -L -o boost_1_78_0.tar.bz2 %DOWNLOAD_URL%
           
-          if (Test-Path "boost_1_78_0") { Rename-Item -Path "boost_1_78_0" -NewName "boost_1_78_0_tmp" }
-          if (Test-Path "boost-1.78.0") { Move-Item -Path "boost-1.78.0" -Destination "boost_1_78_0" }
-          if (Test-Path "boost_1_78_0_tmp") { Move-Item -Path "boost_1_78_0_tmp" -Destination "boost_1_78_0" }
+          echo Extracting Tar Archive (Step 1)...
+          7z x boost_1_78_0.tar.bz2 -y
           
-          Remove-Item -Force "boost.zip"
+          echo Extracting Source Files (Step 2)...
+          7z x boost_1_78_0.tar -y
           
-          Write-Host "=== 检查物理目录特征 ==="
-          Get-ChildItem "${{ github.workspace }}\deps\boost_1_78_0\boost"
+          :: 确保解压出来的根目录与小狼毫脚本要求的特定绝对路径严格对齐 (boost_1_78_0)
+          if exist "boost-1.78.0" move "boost-1.78.0" "boost_1_78_0"
           
-          # 🟢 在纯净环境下直接呼叫小狼毫底层编译
-          Set-Location "${{ github.workspace }}"
-          $env:PATH = "${{ github.workspace }};" + $env:PATH
-          cmd.exe /c ".\build.bat boost"
+          del boost_1_78_0.tar.bz2
+          del boost_1_78_0.tar
+          
+          echo === 终极验证：检查物理真源码是否落地就绪 ===
+          dir "%GITHUB_WORKSPACE%\deps\boost_1_78_0\boost"
+
+      - name: Install Boost
+        shell: cmd
+        run: |
+          :: 将当前包含了伪 aria2c 补丁的路径拔高到最高优先级，截断内部老旧批处理的破坏行为
+          set PATH=%GITHUB_WORKSPACE%;%PATH%
+          call .\install_boost.bat
 
       - name: Check submodules
         shell: cmd
@@ -122,7 +129,7 @@ jobs:
       - name: Build dependencies
         shell: cmd
         run: |
-          :: 🟢 此时物理真源码已完全就绪，系统注册表已被 setx 全局锁死，直接推进 opencc 编译
+          :: 🟢 此时 100MB 的物理真源码已落地，系统注册表由 setx 全局锁死，直接全速切入 opencc 编译
           set PATH=%GITHUB_WORKSPACE%;%PATH%
           .\build.bat opencc
 

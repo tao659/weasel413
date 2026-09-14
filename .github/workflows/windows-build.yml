@@ -13,9 +13,9 @@ jobs:
   build:
     runs-on: windows-latest
     env:
-      boost_version: 1.83.0
-      BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_83_0
-      BOOST_LIBRARYDIR: ${{ github.workspace }}\deps\boost_1_83_0\stage\lib
+      # 🚀 1. Point directly to the Boost version pre-cached by GitHub on windows-latest
+      BOOST_ROOT: C:\hostedtoolcache\windows\Boost\1.83.0\x64
+      BOOST_LIBRARYDIR: C:\hostedtoolcache\windows\Boost\1.83.0\x64\lib
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
     steps:
       - name: Checkout last commit
@@ -27,6 +27,7 @@ jobs:
       - name: Configure build environment
         shell: powershell
         run: |
+          # 2. Duplicate the env file template
           if (Test-Path "env.vs2022.bat") {
               Copy-Item "env.vs2022.bat" -Destination "env.bat" -Force
               Write-Host "Copied env.vs2022.bat to env.bat"
@@ -35,40 +36,21 @@ jobs:
               Write-Host "Fallback: Copied env.vs2019.bat to env.bat"
           }
 
+          # 3. Mount environment variables directly to the global GITHUB_ENV pipeline context
           "BOOST_ROOT=${{ env.BOOST_ROOT }}" | Out-File -FilePath $env:GITHUB_ENV -Append
           "BOOST_LIBRARYDIR=${{ env.BOOST_LIBRARYDIR }}" | Out-File -FilePath $env:GITHUB_ENV -Append
 
           $git_ref_name = git describe --always
           "git_ref_name=$git_ref_name" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Cache Boost
-        id: cache-boost
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.BOOST_ROOT }}
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v3
-
-      - name: Install Boost via Chocolatey (CI Native)
-        if: steps.cache-boost.outputs.cache-hit != 'true'
+      - name: Verify Pre-installed Boost Presence
         shell: powershell
         run: |
-          $targetDir = "${{ env.BOOST_ROOT }}"
-          if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir }
-          
-          Write-Host "Installing Boost 1.83 via Chocolatey..."
-          choco install boost-msvc-14.3 --version 1.83.0 -y
-          
-          $chocoBoostPath = "C:\local\boost_1_83_0"
-          if (Test-Path $chocoBoostPath) {
-              Write-Host "Moving physical files to target build directory..."
-              Copy-Item -Path "$chocoBoostPath\*" -Destination $targetDir -Recurse -Force
-          }
-          
-          if (Test-Path "$targetDir\boost\version.hpp") {
-              Write-Host "Success: version.hpp verified safely."
+          # 4. Verify that the file path actually contains the compiler header rules
+          if (Test-Path "${{ env.BOOST_ROOT }}\boost\version.hpp") {
+              Write-Host "Success: Pre-installed GitHub Boost detected safely!"
           } else {
-              Write-Error "Error: Failed to verify version.hpp in target directory."
+              Write-Error "Error: Boost 1.83.0 was not found in the runner's toolcache folder."
           }
 
       - name: Check submodules
@@ -90,6 +72,7 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: cmd
         run: |
+          # 5. Overwrite env.bat parameters dynamically right before executing build hooks
           echo set BOOST_ROOT=%BOOST_ROOT% > env.bat
           echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
           .\build.bat opencc
@@ -101,6 +84,7 @@ jobs:
         id: build_weasel
         shell: cmd
         run: |
+          # 6. Apply identical file logic parameters for the core installer generation phase
           echo set BOOST_ROOT=%BOOST_ROOT% > env.bat
           echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
           .\build.bat data

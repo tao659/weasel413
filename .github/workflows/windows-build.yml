@@ -47,32 +47,42 @@ jobs:
         with:
           path: |
             ${{ env.BOOST_ROOT }}
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v6
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v7 # Fresh key cache generation
 
-      - name: Fetch and Unpack Boost via Curl Engine
+      - name: Native Git Header Allocation (No Broken Zips)
         if: steps.cache-boost.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           $depsDir = "${{ github.workspace }}\deps"
-          if (-not (Test-Path $depsDir)) { New-Item -ItemType Directory -Force -Path $depsDir }
+          if (-not (Test-Path $depsDir)) { New-Item -ItemType Directory -Force -Path $depsDir | Out-Null }
           
-          Write-Host "Downloading Boost 1.83.0 via SourceForge distribution mirror..."
-          $zipPath = "$env:TEMP\boost.zip"
+          $targetBoostPath = "${{ env.BOOST_ROOT }}"
+          Write-Host "Performing packet-validated shallow clone of Boost Framework structure..."
           
-          # Use curl with explicit redirect processing (-L) to eliminate malformed HTML file chunks
-          curl.exe -L "https://sourceforge.net" -o $zipPath
+          # Shallow clone just the tag baseline to guarantee zero file block dropouts
+          git clone --depth 1 --branch boost-1.83.0 https://github.com $targetBoostPath
           
-          Write-Host "Extracting archive file payload blocks directly into deps..."
-          $extractTemp = "$env:TEMP\boost_extract"
-          Expand-Archive -Path $zipPath -DestinationPath $extractTemp -Force
+          # Step straight into the system workspace to isolate execution context paths
+          Push-Location $targetBoostPath
+          try {
+              Write-Host "Fetching target core C++ header modules..."
+              git submodule update --init --recursive --depth 1 libs/headers
+              
+              # Mirror and link headers directly into root so Weasel validates it instantly
+              if (Test-Path "libs\headers\include\boost") {
+                  Copy-Item -Path "libs\headers\include\boost" -Destination "boost" -Recurse -Force
+                  Write-Host "Successfully mirrored header structures to root workspace layout."
+              }
+          }
+          finally {
+              Pop-Location
+          }
           
-          # Relocate the nested asset stack cleanly to line up with Weasel constraints
-          Move-Item -Path "$extractTemp\boost_1_83_0" -Destination "${{ env.BOOST_ROOT }}" -Force
-          
-          if (Test-Path "${{ env.BOOST_ROOT }}\boost\version.hpp") {
-              Write-Host "Success: Boost file validation parameters passed."
+          # Final validation step
+          if (Test-Path "$targetBoostPath\boost\version.hpp") {
+              Write-Host "Success: C++ version.hpp layout validated and active."
           } else {
-              Write-Error "Error: Mapping breakdown encountered during filesystem alignment."
+              Write-Error "Error: Structural initialization failure in target framework workspace."
           }
 
       - name: Check submodules

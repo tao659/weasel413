@@ -14,7 +14,6 @@ jobs:
     runs-on: windows-latest
     env:
       boost_version: 1.78.0
-      # 锁死绝对路径，与你日志中的 D:\a\weasel413\weasel413 完全对齐
       BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_78_0
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
     steps:
@@ -30,7 +29,7 @@ jobs:
           :: 1. 复制基础配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 强行将正确的绝对路径写入 env.bat，防止其内部默认逻辑走偏
+          :: 2. 强行将正确的绝对路径写入 env.bat，确保后续所有编译子脚本格式对齐
           echo.>>env.bat
           echo set boost_version=${{ env.boost_version }}>>env.bat
           echo set BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0>>env.bat
@@ -38,9 +37,6 @@ jobs:
           :: 3. 记录当前的 git 版本号
           for /f "delims=" %%i in ('git describe --always') do set "git_ref_name=%%i"
           echo git_ref_name=%git_ref_name%>>"%GITHUB_ENV%"
-          
-          echo === 检查生成的 env.bat ===
-          type env.bat
 
       - name: Cache Boost
         id: cache-boost
@@ -50,37 +46,27 @@ jobs:
             ${{ env.BOOST_ROOT }}
           key: ${{ runner.os }}-boost-${{ env.boost_version }}
 
-      - name: Install Boost
+      - name: Pre-download Boost Archive
+        if: steps.cache-boost.outputs.cache-hit != 'true'
         shell: cmd
         run: |
-          :: 如果缓存命中了，直接去执行后续编译，否则在外部接管下载和解压
-          if "${{ steps.cache-boost.outputs.cache-hit }}"=="true" goto run_bat
+          echo === 缓存未命中，在 Actions 层接管下载，完美绕过原本失效的 aria2 逻辑 ===
           
-          echo === 缓存未命中，开始在外部高速下载和解压 Boost ===
-          
-          :: 1. 强行创建符合小狼毫预期的物理目录结构
+          :: 1. 强行创建物理依赖目录
           if not exist "%GITHUB_WORKSPACE%\deps" mkdir "%GITHUB_WORKSPACE%\deps"
           cd "%GITHUB_WORKSPACE%\deps"
           
-          :: 2. 使用系统原生的 curl 从 GitHub 骨干网高速下载官方 CMake 版的 Boost 压缩包
-          curl -L -o boost_1_78_0.zip https://github.com
+          :: 2. 🟢 核心修复：直接使用 GitHub 骨干网下载纯正官方的 .7z 源码包，并严格命名为小狼毫脚本强要求的名称
+          curl -L -o boost_1_78_0.7z https://github.com
           
-          :: 3. 使用原生 PowerShell 强制解压，绝不产生路径歧义
-          powershell -Command "Expand-Archive -Path boost_1_78_0.zip -DestinationPath . -Force"
-          
-          :: 4. 目录校准：确保解压出来的文件夹名字绝对是小狼毫强校验的 boost_1_78_0
-          if exist "boost_1_78_0_cmake" move "boost_1_78_0_cmake" "boost_1_78_0"
-          if exist "boost_1.78.0" move "boost_1.78.0" "boost_1_78_0"
-          
-          :: 5. 安全清理压缩包
-          del boost_1_78_0.zip
-          
-          echo === 验证：确保 %BOOST_ROOT%\boost 目录物理就绪 ===
-          dir "%GITHUB_WORKSPACE%\deps\boost_1_78_0\boost"
+          :: 3. 打印当前目录确认文件已就绪
+          dir
 
-          :run_bat
-          :: 回到工作流根目录，呼叫小狼毫的脚本（此时脚本内的 goto boost_found 会直接触发，完美绕过原先报错的 aria2 逻辑）
-          cd "%GITHUB_WORKSPACE%"
+      - name: Install Boost
+        shell: cmd
+        run: |
+          :: 执行你的 install_boost.bat
+          :: 此时由于 deps/boost_1_78_0.7z 已经存在，脚本会直接调用 7z 解压并编译！
           call .\install_boost.bat
 
       - name: Check submodules

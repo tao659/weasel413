@@ -11,42 +11,78 @@ on:
         type: string
 jobs:
   build:
-    runs-on: windows-2019
+    runs-on: windows-latest
     env:
-      boost_version: 1.78.0
-      BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_78_0
+      boost_version: 1.83.0
+      # 🚀 1. 明确指向固定的绝对路径
+      BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_83_0
+      BOOST_LIBRARYDIR: ${{ github.workspace }}\deps\boost_1_83_0\stage\lib
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
     steps:
       - name: Checkout last commit
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
           submodules: recursive
 
       - name: Configure build environment
+        shell: powershell
         run: |
-          copy env.vs2019.bat env.bat
+          # 🚀 2. 检查是否存在针对 VS2022 的环境配置文件，没有则创建或回退
+          if (Test-Path "env.vs2022.bat") {
+              Copy-Item "env.vs2022.bat" -Destination "env.bat" -Force
+              Write-Host "已成功复制 env.vs2022.bat 到 env.bat"
+          } else {
+              Copy-Item "env.vs2019.bat" -Destination "env.bat" -Force
+              Write-Host "未找到 env.vs2022.bat，已回退复制 env.vs2019.bat"
+          }
+
+          # 🚀 3. 将变量直接挂载到系统级 GITHUB_ENV，确保后续步骤环境干净
+          "BOOST_ROOT=${{ env.BOOST_ROOT }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "BOOST_LIBRARYDIR=${{ env.BOOST_LIBRARYDIR }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+
           $git_ref_name = git describe --always
-          echo "git_ref_name=$git_ref_name" >> $env:GITHUB_ENV
+          "git_ref_name=$git_ref_name" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Cache Boost
         id: cache-boost
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ${{ env.BOOST_ROOT }}
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v3  # ✨ 核心：更新为 -v3，彻底强制清理损坏的旧缓存快照
 
-      - name: Install Boost
+      - name: Install Boost via Chocolatey (CI Native)
         if: steps.cache-boost.outputs.cache-hit != 'true'
-        run: .\install_boost.bat
+        shell: powershell
+        run: |
+          $targetDir = "${{ env.BOOST_ROOT }}"
+          if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir }
+          
+          # 🚀 4. 使用 choco 安装专门适配 VS2022 编译器的 MSVC 14.3 版本 Boost
+          Write-Host "正在通过 Chocolatey 安装 Boost 1.83 (MSVC 14.3)..."
+          choco install boost-msvc-14.3 --version 1.83.0 -y
+          
+          # Choco 默认安装路径通常在 C:\local\boost_1_83_0，我们将其物理拷贝到小狼毫要求的 deps 目录下
+          $chocoBoostPath = "C:\local\boost_1_83_0"
+          if (Test-Path $chocoBoostPath) {
+              Write-Host "下载成功，正在迁移物理文件到编译目录..."
+              Copy-Item -Path "$chocoBoostPath\*" -Destination $targetDir -Recurse -Force
+          }
+          
+          # 🚨 5. 关键实体硬编码验证
+          if (Test-Path "$targetDir\boost\version.hpp") {
+              Write-Host "🎉 物理头文件已成功安置完毕！version.hpp 验证通过。"
+          } else {
+              Write-Error "未能成功安置 Boost，请检查编译链权限"
+          }
 
       - name: Check submodules
         run: git submodule > submodule-status
 
       - name: Cache dependencies
         id: cache-deps
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             librime
@@ -54,25 +90,33 @@ jobs:
           key: ${{ runner.os }}-deps-${{ hashFiles('submodule-status') }}
 
       - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v1.1.3
+        uses: microsoft/setup-msbuild@v2  # 升级到 v2 以便原生识别 VS2022
 
       - name: Build dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: .\build.bat opencc
+        shell: cmd
+        run: |
+          # 🚀 6. 每次实际调用编译前，再次强制就地重写 env.bat，防止被其他脚本静默覆盖
+          echo set BOOST_ROOT=%BOOST_ROOT% > env.bat
+          echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
+          .\build.bat opencc
 
       - name: Copy Rime files
         run: .\github.install.bat
 
-
       - name: Build Weasel
         id: build_weasel
+        shell: cmd
         run: |
+          # 🚀 7. 终极小狼毫打包步骤变量双重保活
+          echo set BOOST_ROOT=%BOOST_ROOT% > env.bat
+          echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
           .\build.bat data
           .\build.bat hant
           .\build.bat installer
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           if-no-files-found: error
           path: |

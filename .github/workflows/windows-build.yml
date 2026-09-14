@@ -26,9 +26,10 @@ jobs:
       - name: Configure build environment
         shell: cmd
         run: |
-          :: 1. 🟢 核心修复：把所有潜在的模板文件以及 env.bat 全部灌入我们的绝对路径配置！
-          :: 这样无论 build.bat 怎么复制、怎么覆盖，任何一个文件里都有正确的 BOOST_ROOT
+          :: 1. 强制清理可能残留的坏文件
+          if exist env.bat del /f /q env.bat
           
+          :: 2. 核心修复：将绝对路径直接灌入所有潜在的模板文件，杜绝后续重置的可能
           if exist env.vs2019.bat (
               echo.>>env.vs2019.bat
               echo set boost_version=${{ env.boost_version }}>>env.vs2019.bat
@@ -41,23 +42,23 @@ jobs:
               echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.vs2017.bat
           )
           
-          :: 生成当前的 env.bat
+          :: 复制并硬编码当前的 env.bat
           copy env.vs2019.bat env.bat
           echo.>>env.bat
           echo set boost_version=${{ env.boost_version }}>>env.bat
           echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.bat
           
-          :: 2. 全局安全垫片：立刻创建防劫持的伪 aria2c.bat
+          :: 3. 全局安全垫片：在工作流根目录下立刻创建防劫持的伪 aria2c.bat
           echo @echo off > "%GITHUB_WORKSPACE%\aria2c.bat"
           echo echo [Actions Mock] Safely bypass buggy aria2c call... >> "%GITHUB_WORKSPACE%\aria2c.bat"
           echo exit /b 0 >> "%GITHUB_WORKSPACE%\aria2c.bat"
           
-          :: 3. 记录当前的 git 版本号
+          :: 4. 记录当前的 git 版本号
           for /f "delims=" %%i in ('git describe --always') do set "git_ref_name=%%i"
           echo git_ref_name=%git_ref_name%>>"%GITHUB_ENV%"
           
-          echo === 检查被修改后的 env.vs2019.bat 内容 ===
-          type env.vs2019.bat
+          echo === 检查最终生成的硬编码 env.bat ===
+          type env.bat
 
       - name: Cache Boost
         id: cache-boost
@@ -65,7 +66,8 @@ jobs:
         with:
           path: |
             ${{ env.BOOST_ROOT }}
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}
+          # 🟢 核心修复：更新 key 名字（加上 -v2），彻底跳过并丢弃此前残留的空/坏缓存
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v2
 
       - name: Pre-download and Forge Boost Archive
         if: steps.cache-boost.outputs.cache-hit != 'true'
@@ -73,20 +75,27 @@ jobs:
         run: |
           echo === 缓存未命中，在 Actions 层接管下载 ===
           
-          if not exist "${{ github.workspace }}\deps" mkdir "${{ github.workspace }}\deps"
+          :: 1. 彻底清除云端可能缓存下来的任何空/坏目录结构，确保重新生成
+          if exist "${{ github.workspace }}\deps" rd /s /q "${{ github.workspace }}\deps"
+          mkdir "${{ github.workspace }}\deps"
           cd /d "${{ github.workspace }}\deps"
           
-          :: 下载官方通用 .zip 源码包
+          :: 2. 下载官方 100% 真实存在的通用 .zip 源码包 (约 140MB)
           curl -L -o boost_1_78_0.zip https://github.com
           
-          :: 解压并重命名符合小狼毫预期的目录
+          :: 3. 用系统自带的 7z 先把 .zip 解压出来
           7z x boost_1_78_0.zip
+          
+          :: 4. 确保解压出来的根目录名称一致
           if exist "boost-1.78.0" move "boost-1.78.0" "boost_1_78_0"
           
-          :: 重新打包为 7z
+          :: 5. 将解压出来的真实源码文件夹，重新打包成小狼毫脚本需要的 boost_1_78_0.7z 格式
           7z a -m0=lzma2 boost_1_78_0.7z boost_1_78_0
           rd /s /q boost_1_78_0
           del boost_1_78_0.zip
+          
+          echo === 检查制作就绪的 7z 压缩包体积大小 ===
+          dir
 
       - name: Install Boost
         shell: cmd

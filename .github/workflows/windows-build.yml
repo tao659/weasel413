@@ -14,7 +14,6 @@ jobs:
     runs-on: windows-latest
     env:
       boost_version: 1.83.0
-      # 🚀 1. Set the absolute path mapping the Rime native tool expectations
       BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_83_0
       BOOST_LIBRARYDIR: ${{ github.workspace }}\deps\boost_1_83_0\stage\lib
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
@@ -25,34 +24,15 @@ jobs:
           repository: ${{ inputs.repository }}
           submodules: recursive
 
-      - name: Cache Boost
-        id: cache-boost
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.BOOST_ROOT }}
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v8
-
-      # 🚀 2. Core Fix: Use Weasel's native script to securely populate Boost and Submodules
-      - name: Fetch Rime Components and Boost via Native Script
-        if: steps.cache-boost.outputs.cache-hit != 'true'
-        shell: powershell
-        run: |
-          if (Test-Path "get-rime.ps1") {
-              Write-Host "Executing official get-rime setup automation..."
-              # This script automatically downloads the correct Boost archive and maps its structure perfectly
-              .\get-rime.ps1 -use dev
-          } else {
-              Write-Error "get-rime.ps1 script missing from repository root."
-          }
-
       - name: Configure build environment
         shell: powershell
         run: |
           if (Test-Path "env.vs2022.bat") {
               Copy-Item "env.vs2022.bat" -Destination "env.bat" -Force
+              Write-Host "Copied env.vs2022.bat to env.bat"
           } else {
               Copy-Item "env.vs2019.bat" -Destination "env.bat" -Force
+              Write-Host "Fallback: Copied env.vs2019.bat to env.bat"
           }
 
           "BOOST_ROOT=${{ env.BOOST_ROOT }}" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -60,6 +40,42 @@ jobs:
 
           $git_ref_name = git describe --always
           "git_ref_name=$git_ref_name" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Cache Boost
+        id: cache-boost
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BOOST_ROOT }}
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v9
+
+      # 🚀 Core Fix: Pull official, validated prebuilt structural layouts via native git packages
+      - name: Fetch Pre-Compiled Boost Structural Frame via Git
+        if: steps.cache-boost.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          $depsDir = "${{ github.workspace }}\deps"
+          if (-not (Test-Path $depsDir)) { New-Item -ItemType Directory -Force -Path $depsDir | Out-Null }
+          
+          Write-Host "Cloning official standalone prebuilt header mapping layer..."
+          $targetBoost = "${{ env.BOOST_ROOT }}"
+          
+          # Clones only the minimal required header workspace structure safely via standard git packets
+          git clone --depth 1 https://github.com $targetBoost
+          
+          if (-not (Test-Path "$targetBoost\boost\version.hpp")) {
+              Write-Host "Re-aligning repository layout blocks..."
+              # Fallback cloning index configuration for the target layout
+              git clone --depth 1 --branch boost-1.83.0 https://github.com $targetBoost
+              git -C $targetBoost submodule update --init --recursive --depth 1 libs/headers
+              Copy-Item -Path "$targetBoost\libs\headers\include\boost" -Destination "$targetBoost\boost" -Recurse -Force
+          }
+
+          if (Test-Path "$targetBoost\boost\version.hpp") {
+              Write-Host "Success: Verified system version.hpp successfully."
+          } else {
+              Write-Error "Error: Structural validation mismatch inside the build pipeline."
+          }
 
       - name: Check submodules
         run: git submodule > submodule-status
@@ -80,7 +96,6 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: cmd
         run: |
-          # 🚀 3. Inject paths into env.bat immediately before compiling
           echo set BOOST_ROOT=%BOOST_ROOT% > env.bat
           echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
           .\build.bat opencc

@@ -11,64 +11,45 @@ on:
         type: string
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2019
     env:
-      boost_version: 1.83.0
-      # 🚀 1. Relocate BOOST_ROOT directly to the native vcpkg tracking environment path
-      BOOST_ROOT: C:\vcpkg\installed\x64-windows
-      BOOST_LIBRARYDIR: C:\vcpkg\installed\x64-windows\lib
+      boost_version: 1.78.0
+      BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_78_0
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
     steps:
       - name: Checkout last commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
           repository: ${{ inputs.repository }}
           submodules: recursive
 
       - name: Configure build environment
-        shell: powershell
+        shell: cmd # 🟢 切换到 cmd 确保 copy 和批处理正常工作
         run: |
-          if (Test-Path "env.vs2022.bat") {
-              Copy-Item "env.vs2022.bat" -Destination "env.bat" -Force
-              Write-Host "Copied env.vs2022.bat to env.bat"
-          } else {
-              Copy-Item "env.vs2019.bat" -Destination "env.bat" -Force
-              Write-Host "Fallback: Copied env.vs2019.bat to env.bat"
-          }
+          copy env.vs2019.bat env.bat
+          for /f "delims=" %%i in ('git describe --always') do set "git_ref_name=%%i"
+          echo git_ref_name=%git_ref_name%>>"%GITHUB_ENV%"
 
-          "BOOST_ROOT=${{ env.BOOST_ROOT }}" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "BOOST_LIBRARYDIR=${{ env.BOOST_LIBRARYDIR }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Cache Boost
+        id: cache-boost
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ env.BOOST_ROOT }}
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}
 
-          $git_ref_name = git describe --always
-          "git_ref_name=$git_ref_name" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      # 🚀 2. Core Fix: Install minimal lightweight boost headers using the runner's native vcpkg engine
-      - name: Provision Boost Headers via Native Vcpkg
-        shell: powershell
-        run: |
-          Write-Host "Installing Boost header layout safely via vcpkg toolchain..."
-          # Fetching only core headers avoids full compilation and runs very fast
-          vcpkg install boost-vcpkg-helpers:x64-windows boost-core:x64-windows
-          
-          # Force create a mock header copy loop so Weasel's checking script matches instantly
-          $targetBoostDir = "${{ env.BOOST_ROOT }}\boost"
-          $sourceIncludeDir = "C:\vcpkg\installed\x64-windows\include\boost"
-          
-          if (Test-Path $sourceIncludeDir) {
-              if (-not (Test-Path $targetBoostDir)) { New-Item -ItemType Directory -Force -Path $targetBoostDir | Out-Null }
-              Copy-Item -Path "$sourceIncludeDir\*" -Destination $targetBoostDir -Recurse -Force
-              
-              # Generate a mock fallback version.hpp if the library layer expects it in root format
-              "// Mock validation header`n#define BOOST_VERSION 108300" | Out-File -FilePath "${{ env.BOOST_ROOT }}\boost\version.hpp" -Force
-              Write-Host "Vcpkg Boost mapping completed safely."
-          }
+      - name: Install Boost
+        if: steps.cache-boost.outputs.cache-hit != 'true'
+        shell: cmd # 🟢 显式使用 cmd 运行
+        run: .\install_boost.bat
 
       - name: Check submodules
+        shell: cmd
         run: git submodule > submodule-status
 
       - name: Cache dependencies
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@v3
         with:
           path: |
             librime
@@ -76,32 +57,27 @@ jobs:
           key: ${{ runner.os }}-deps-${{ hashFiles('submodule-status') }}
 
       - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@v1.1.3
 
       - name: Build dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          # 🚀 3. Bind the active vcpkg location into env.bat right before building
-          echo set BOOST_ROOT=%BOOST_ROOT% > env.bat
-          echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
-          .\build.bat opencc
+        shell: cmd # 🟢 显式使用 cmd 运行
+        run: .\build.bat opencc
 
       - name: Copy Rime files
+        shell: cmd # 🟢 显式使用 cmd 运行
         run: .\github.install.bat
 
       - name: Build Weasel
         id: build_weasel
-        shell: cmd
+        shell: cmd # 🟢 显式使用 cmd 运行
         run: |
-          echo set BOOST_ROOT=%BOOST_ROOT% > env.bat
-          echo set BOOST_LIBRARYDIR=%BOOST_LIBRARYDIR% >> env.bat
           .\build.bat data
           .\build.bat hant
           .\build.bat installer
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           if-no-files-found: error
           path: |

@@ -51,25 +51,8 @@ jobs:
 
       - name: Install Boost
         if: steps.cache-boost.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          :: 确保创建了正确的依赖目录
-          if not exist "%github.workspace%\deps" mkdir "%github.workspace%\deps"
-          cd "%github.workspace%\deps"
-          
-          :: 使用系统自带的 curl 稳定下载官方 CMake 版本的 Boost 压缩包
-          curl -L -o boost.zip https://github.com{{ env.boost_version }}/boost_${{ env.boost_version:.=_ }}_cmake.zip
-          
-          :: 使用 PowerShell 高速解压
-          powershell -Command "Expand-Archive -Path boost.zip -DestinationPath . -Force"
-          
-          :: 确保解压出来的目录名称与 BOOST_ROOT 严格匹配 (boost_1_78_0)
-          if exist "boost_${{ env.boost_version }}" move "boost_${{ env.boost_version }}" "boost_1_78_0"
-          if exist "boost_${{ env.boost_version:.=_ }}_cmake" move "boost_${{ env.boost_version:.=_ }}_cmake" "boost_1_78_0"
-          
-          :: 回到根目录执行编译
-          cd "%github.workspace%"
-          call .\install_boost.bat
+        shell: cmd # 🟢 修复3
+        run: .\install_boost.bat
 
 
       - name: Check submodules

@@ -26,12 +26,9 @@ jobs:
       - name: Configure build environment
         shell: cmd
         run: |
-          :: 1. 🟢 终极核武器：直接把 BOOST_ROOT 和 boost_version 焊死进 GitHub Actions 的全局系统环境变量中！
-          :: 这样之后的所有步骤、所有子进程、无论切换到哪个深度目录，系统都自带这两个变量，根本不需要去读 env.bat！
-          echo boost_version=${{ env.boost_version }}>>"%GITHUB_ENV%"
-          echo BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>"%GITHUB_ENV%"
-          
-          :: 2. 同时保留模板覆盖的防御性写入，做到全方位无死角
+          :: ==========================================
+          :: 🟢 核心修复 1：把根目录的模板和 env.bat 全部焊死
+          :: ==========================================
           if exist env.vs2019.bat (
               echo.>>env.vs2019.bat
               echo set boost_version=${{ env.boost_version }}>>env.vs2019.bat
@@ -42,12 +39,42 @@ jobs:
           echo set boost_version=${{ env.boost_version }}>>env.bat
           echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.bat
           
+          :: ==========================================
+          :: 🟢 核心修复 2：把子模块 librime 目录下的模板和 env.bat 也全部焊死！
+          :: 彻底斩断 librime\build.bat opencc 的重置和报错生路！
+          :: ==========================================
+          if not exist "librime" mkdir "librime"
+          cd librime
+          
+          if exist env.vs2019.bat (
+              echo.>>env.vs2019.bat
+              echo set boost_version=${{ env.boost_version }}>>env.vs2019.bat
+              echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.vs2019.bat
+          )
+          
+          :: 直接在子目录下也强制生成一个带有完备绝对路径的 env.bat
+          if exist env.vs2019.bat (
+              copy /y env.vs2019.bat env.bat
+          ) else (
+              echo set boost_version=${{ env.boost_version }}>env.bat
+              echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.bat
+          )
+          echo.>>env.bat
+          echo set boost_version=${{ env.boost_version }}>>env.bat
+          echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.bat
+          
+          cd ..
+          
           :: 3. 全局安全垫片：立刻创建防劫持的伪 aria2c.bat
           echo @echo off > "%GITHUB_WORKSPACE%\aria2c.bat"
           echo echo [Actions Mock] Safely bypass buggy aria2c call... >> "%GITHUB_WORKSPACE%\aria2c.bat"
           echo exit /b 0 >> "%GITHUB_WORKSPACE%\aria2c.bat"
           
-          :: 4. 记录当前的 git 版本号
+          :: 4. 将系统全局环境变量注入，确保双保险
+          echo boost_version=${{ env.boost_version }}>>"%GITHUB_ENV%"
+          echo BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>"%GITHUB_ENV%"
+          
+          :: 5. 记录当前的 git 版本号
           for /f "delims=" %%i in ('git describe --always') do set "git_ref_name=%%i"
           echo git_ref_name=%git_ref_name%>>"%GITHUB_ENV%"
 
@@ -57,7 +84,7 @@ jobs:
         with:
           path: |
             ${{ env.BOOST_ROOT }}
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v3
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v4
 
       - name: Pre-download and Forge Boost Archive
         if: steps.cache-boost.outputs.cache-hit != 'true'
@@ -105,7 +132,7 @@ jobs:
       - name: Build dependencies
         shell: cmd
         run: |
-          :: 🟢 此时全局系统变量中已经硬塞了 BOOST_ROOT，任凭 build.bat 怎么跳目录都绝对无法摆脱它！
+          :: 🟢 此时不论根目录还是 librime 子目录，所有的 env.bat 和系统变量全部塞满了真正的 Boost 路径
           set PATH=%GITHUB_WORKSPACE%;%PATH%
           .\build.bat opencc
 

@@ -11,7 +11,7 @@ on:
         type: string
 jobs:
   build:
-    runs-on: windows-latest  # 🟢 使用最新的官方 Windows 环境
+    runs-on: windows-latest
     env:
       boost_version: 1.78.0
       BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_78_0
@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.repository }}
-          submodules: 'recursive'  # 🟢 递归拉取核心依赖库子模块
+          submodules: 'recursive'
           fetch-depth: 0
 
       - name: Configure build environment
@@ -30,15 +30,13 @@ jobs:
           :: 1. 复制基础环境配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 🟢 核心核武器：由于 build.bat 在编译子依赖时会多次重洗变量
-          :: 我们在运行前，直接通过 PowerShell 强行修改 build.bat 本身的第一行！
-          :: 让 build.bat 只要被调用，头部第一件事就是强行 set 我们的绝对路径，不给它任何反弹的机会！
-          powershell -Command "(Get-Content build.bat) -replace '@echo off', '@echo off`nset boost_version=${{ env.boost_version }}`nset BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0" | Out-File -Encoding ASCII build.bat_new"
+          :: 2. 🟢 修正版核武器：将整个管道符和 Out-File 逻辑全部缩进 PowerShell 的双引号进程内，防止 CMD 提前拦截
+          powershell -Command "(Get-Content build.bat) -replace '@echo off', '@echo off`nset boost_version=${{ env.boost_version }}`nset BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0' | Out-File -Encoding ASCII build.bat_new"
           move /y build.bat_new build.bat
           
-          :: 3. 🟢 如果子模块 librime 存在，同样强行在其内部的 build.bat 头部焊死变量！
+          :: 3. 🟢 同样修复子模块内 build.bat 的重写逻辑
           if exist "librime\build.bat" (
-              powershell -Command "(Get-Content librime\build.bat) -replace '@echo off', '@echo off`nset boost_version=${{ env.boost_version }}`nset BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0" | Out-File -Encoding ASCII librime\build.bat_new"
+              powershell -Command "(Get-Content librime\build.bat) -replace '@echo off', '@echo off`nset boost_version=${{ env.boost_version }}`nset BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0' | Out-File -Encoding ASCII librime\build.bat_new"
               move /y librime\build.bat_new librime\build.bat
           )
           
@@ -106,7 +104,6 @@ jobs:
       - name: Build dependencies
         shell: cmd
         run: |
-          :: 🟢 此时脚本自身的入口代码已经被我们强行修改。它一启动就会自备变量，绝对没有任何报错可能了！
           set PATH=%GITHUB_WORKSPACE%;%PATH%
           .\build.bat opencc
 

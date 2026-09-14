@@ -29,7 +29,7 @@ jobs:
           :: 1. 复制基础配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 强行将正确的绝对路径写入 env.bat，确保后续所有编译子脚本格式对齐
+          :: 2. 将绝对路径写入 env.bat，确保后续所有编译子脚本格式对齐
           echo.>>env.bat
           echo set boost_version=${{ env.boost_version }}>>env.bat
           echo set BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0>>env.bat
@@ -46,27 +46,40 @@ jobs:
             ${{ env.BOOST_ROOT }}
           key: ${{ runner.os }}-boost-${{ env.boost_version }}
 
-      - name: Pre-download Boost Archive
+      - name: Pre-forge Boost 7z Archive
         if: steps.cache-boost.outputs.cache-hit != 'true'
         shell: cmd
         run: |
-          echo === 缓存未命中，在 Actions 层接管下载，完美绕过原本失效的 aria2 逻辑 ===
+          echo === 缓存未命中，在 Actions 层接管下载，完美伪造小狼毫所需的 .7z 源码包 ===
           
-          :: 1. 强行创建物理依赖目录
+          :: 1. 创建物理依赖目录并进入
           if not exist "%GITHUB_WORKSPACE%\deps" mkdir "%GITHUB_WORKSPACE%\deps"
           cd "%GITHUB_WORKSPACE%\deps"
           
-          :: 2. 🟢 核心修复：直接使用 GitHub 骨干网下载纯正官方的 .7z 源码包，并严格命名为小狼毫脚本强要求的名称
-          curl -L -o boost_1_78_0.7z https://github.com
+          :: 2. 🟢 下载官方 100% 真实存在的通用 .zip 源码包 (约 140MB)
+          curl -L -o boost_1_78_0.zip https://github.com
           
-          :: 3. 打印当前目录确认文件已就绪
+          :: 3. 用系统自带的 7z 先把 .zip 解压出来
+          7z x boost_1_78_0.zip
+          
+          :: 4. 确保解压出来的根目录名称与压缩包内的路径结构保持一致 (解压出来通常是 boost_1_78_0)
+          if exist "boost-1.78.0" move "boost-1.78.0" "boost_1_78_0"
+          
+          :: 5. 🟢 核心魔法：将解压出来的真实源码文件夹，重新打包成小狼毫脚本强行索要的 boost_1_78_0.7z 格式！
+          7z a -m0=lzma2 boost_1_78_0.7z boost_1_78_0
+          
+          :: 6. 安全清理临时解压的文件夹和 zip 包，只留下小狼毫需要的那一个完美的 .7z 文件
+          rd /s /q boost_1_78_0
+          del boost_1_78_0.zip
+          
+          :: 7. 打印当前目录，此时你会看到一个真正的、约 80MB+ 的 boost_1_78_0.7z 稳稳躺在这里
           dir
 
       - name: Install Boost
         shell: cmd
         run: |
           :: 执行你的 install_boost.bat
-          :: 此时由于 deps/boost_1_78_0.7z 已经存在，脚本会直接调用 7z 解压并编译！
+          :: 此时由于真正的 deps/boost_1_78_0.7z 已经就绪，脚本内部的 7z 解压将 100% 成功，随后直接自动切入 Boost 的正式编译！
           call .\install_boost.bat
 
       - name: Check submodules

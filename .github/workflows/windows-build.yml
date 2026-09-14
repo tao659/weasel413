@@ -11,10 +11,10 @@ on:
         type: string
 jobs:
   build:
-    runs-on: windows-latest  # 使用最新的 Windows 环境
+    runs-on: windows-latest
     env:
       boost_version: 1.78.0
-      # 🟢 显式将 BOOST_ROOT 绝对路径设为固定的 deps 目录
+      # 🟢 终极修正 1：路径对齐官方批处理逻辑中点变下划线的规范 (boost_1_78_0)
       BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_78_0
       RIME_PLUGINS: ${{ inputs.rime_plugins }}
     steps:
@@ -30,8 +30,7 @@ jobs:
           :: 1. 复制环境基础配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 🟢 核心修复：直接将经过转义、无歧义的绝对路径追加到 env.bat 内部
-          :: 这样无论 build.bat 怎么通过 env.bat 刷新，都能 100% 拿到正确的路径
+          :: 2. 🟢 终极修正 2：将带有反斜杠转义后的绝对物理路径同时塞入全局及局部
           echo.>>env.bat
           echo set boost_version=${{ env.boost_version }}>>env.bat
           echo set BOOST_ROOT=%GITHUB_WORKSPACE%\deps\boost_1_78_0>>env.bat
@@ -40,8 +39,7 @@ jobs:
           for /f "delims=" %%i in ('git describe --always') do set "git_ref_name=%%i"
           echo git_ref_name=%git_ref_name%>>"%GITHUB_ENV%"
           
-          :: 打印 env.bat 内容以供日志核对
-          echo === 检查生成的 env.bat 内容 ===
+          echo === 检查生成的 env.bat 最终配置 ===
           type env.bat
 
       - name: Cache Boost
@@ -56,22 +54,25 @@ jobs:
         if: steps.cache-boost.outputs.cache-hit != 'true'
         shell: cmd
         run: |
-          :: 🟢 核心修复：确保创建完备的多层物理目录
+          :: 🟢 终极修正 3：在工作区根目录下创建完全符合 RIME 规范的深层物理嵌套结构
           if not exist "%GITHUB_WORKSPACE%\deps" mkdir "%GITHUB_WORKSPACE%\deps"
           cd "%GITHUB_WORKSPACE%\deps"
           
-          :: 下载稳定官方包
+          :: 使用系统自带的 curl 稳定下载 CMake 版本的 Boost
           curl -L -o boost.zip https://github.com{{ env.boost_version }}/boost_1_78_0_cmake.zip
           
-          :: 使用 PowerShell 强制解压到当前目录
+          :: 强制将其解压缩到当前 deps 文件夹
           powershell -Command "Expand-Archive -Path boost.zip -DestinationPath . -Force"
           
-          :: 小狼毫脚本强校验 %BOOST_ROOT%\boost 目录是否存在
-          :: 如果解压出来名字带 _cmake 尾缀，强行修正为标准名称
+          :: 关键路径校准：处理官方压缩包解压出来自带后缀导致小狼毫找不到的问题
           if exist "boost_${{ env.boost_version }}_cmake" move "boost_${{ env.boost_version }}_cmake" "boost_1_78_0"
           if exist "boost_1_78_0_cmake" move "boost_1_78_0_cmake" "boost_1_78_0"
           
-          :: 回到根目录执行编译
+          :: 验证关键特征文件：确保 %BOOST_ROOT%\boost 目录物理真实存在
+          echo === 检查 Boost 路径就绪状态 ===
+          dir "%GITHUB_WORKSPACE%\deps\boost_1_78_0\boost"
+          
+          :: 回到根目录，在安全干净的环境下呼叫编译
           cd "%GITHUB_WORKSPACE%"
           call .\install_boost.bat
 

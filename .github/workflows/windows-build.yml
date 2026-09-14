@@ -47,34 +47,33 @@ jobs:
         with:
           path: |
             ${{ env.BOOST_ROOT }}
-          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v4
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}-v5 # Incremented cache key to ensure fresh pull
 
-      - name: Download and Native Extract Boost (Guaranteed Rescue)
+      - name: Fetch Boost Source Safely via Git
         if: steps.cache-boost.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           $depsDir = "${{ github.workspace }}\deps"
           if (-not (Test-Path $depsDir)) { New-Item -ItemType Directory -Force -Path $depsDir }
           
-          Write-Host "Downloading raw source for Boost 1.83.0 from github archives..."
-          $url = "https://github.com"
-          $zipPath = "$env:TEMP\boost.zip"
+          Write-Host "Cloning Boost repository at tag boost-1.83.0..."
+          # Shallow clone just the metadata tag to optimize performance and disk footprint
+          git clone --depth 1 --branch boost-1.83.0 https://github.com "${{ env.BOOST_ROOT }}"
           
-          # Stable stream download
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          # Initialize the internal layout system Weasel strictly expects
+          cd "${{ env.BOOST_ROOT }}"
+          git submodule update --init --recursive --depth 1 libs/headers
           
-          Write-Host "Extracting archive file structure directly to deps folder..."
-          $extractTemp = "$env:TEMP\boost_temp"
-          Expand-Archive -Path $zipPath -DestinationPath $extractTemp -Force
-          
-          # Move files into place to strip out extra sub-folder nesting levels
-          Move-Item -Path "$extractTemp\boost-1.83.0" -Destination "${{ env.BOOST_ROOT }}" -Force
-          
-          if (Test-Path "${{ env.BOOST_ROOT }}\boost\version.hpp") {
-              Write-Host "Success: Boost file structure mapped perfectly."
+          # Force mirror the header structure into place so 'boost/version.hpp' sits perfectly in root
+          if (Test-Path "libs\headers\include\boost") {
+              Copy-Item -Path "libs\headers\include\boost" -Destination "boost" -Recurse -Force
+              Write-Host "Boost internal directory layout mirrored successfully."
+          }
+
+          if (Test-Path "boost\version.hpp") {
+              Write-Host "Success: Git source verified. version.hpp found safely."
           } else {
-              Write-Error "Error: Structure allocation failure during file relocation."
+              Write-Error "Error: Failed to verify structural integrity of the cloned dependency framework."
           }
 
       - name: Check submodules

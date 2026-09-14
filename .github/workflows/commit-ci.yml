@@ -8,6 +8,10 @@ on:
       - '![0-9]+.*'
   pull_request:
   workflow_dispatch:  
+
 jobs:
   windows:
+    # 🟢 保持相对路径调用，但确保在下面传递干净的 inputs 环境
     uses: ./.github/workflows/windows-build.yml
+    with:
+      repository: ${{ github.repository }}

@@ -29,17 +29,22 @@ jobs:
           :: 1. 复制基础配置文件
           copy env.vs2019.bat env.bat
           
-          :: 2. 🟢 核心修复：使用 ${{ github.workspace }} 在 Actions 解析期就把绝对路径字符串死死写进 env.bat
-          :: 这样生成的 env.bat 里就不会包含任何可能在跨步骤时失效的 %GITHUB_WORKSPACE% 动态变量
+          :: 2. 🟢 核心修复：使用硬编码绝对路径直接焊死环境变量，绝不给子脚本用局部变量覆盖的机会
           echo.>>env.bat
           echo set boost_version=${{ env.boost_version }}>>env.bat
           echo set BOOST_ROOT=${{ github.workspace }}\deps\boost_1_78_0>>env.bat
           
-          :: 3. 记录当前的 git 版本号
+          :: 3. 🟢 全局安全垫片：在工作流根目录下立刻创建防劫持的伪 aria2c.bat
+          :: 这样无论哪一步（Install Boost / Build opencc）调用 aria2c，都会走这个安全的假脚本，绝不覆盖文件
+          echo @echo off > "%GITHUB_WORKSPACE%\aria2c.bat"
+          echo echo [Actions Mock] Safely bypass buggy aria2c call... >> "%GITHUB_WORKSPACE%\aria2c.bat"
+          echo exit /b 0 >> "%GITHUB_WORKSPACE%\aria2c.bat"
+          
+          :: 4. 记录当前的 git 版本号
           for /f "delims=" %%i in ('git describe --always') do set "git_ref_name=%%i"
           echo git_ref_name=%git_ref_name%>>"%GITHUB_ENV%"
           
-          echo === 检查最终生成的硬编码 env.bat ===
+          echo === 检查生成的 env.bat ===
           type env.bat
 
       - name: Cache Boost
@@ -66,22 +71,16 @@ jobs:
           7z x boost_1_78_0.zip
           if exist "boost-1.78.0" move "boost-1.78.0" "boost_1_78_0"
           
-          :: 重新打包为 7z
+          :: 重新打包为 7z，供 install_boost.bat 内部的 7z x 顺利释放
           7z a -m0=lzma2 boost_1_78_0.7z boost_1_78_0
           rd /s /q boost_1_78_0
           del boost_1_78_0.zip
-          
-          :: 创建截获用的伪 aria2c.bat
-          cd /d "${{ github.workspace }}"
-          echo @echo off > aria2c.bat
-          echo echo [Actions Mock] Skipping buggy aria2c download, using pre-downloaded 7z archive... >> aria2c.bat
-          echo exit /b 0 >> aria2c.bat
 
       - name: Install Boost
         shell: cmd
         run: |
-          :: 注入假的 aria2c 路径最高优先级
-          set PATH=%CD%;%PATH%
+          :: 🟢 将包含假 aria2c.bat 的工作区根目录强行推入最高优先级 PATH 
+          set PATH=%GITHUB_WORKSPACE%;%PATH%
           call .\install_boost.bat
 
       - name: Check submodules
@@ -102,7 +101,10 @@ jobs:
 
       - name: Build dependencies
         shell: cmd
-        run: .\build.bat opencc
+        run: |
+          :: 🟢 核心修复：在编译 opencc 这一步同样注入防御性 PATH，防止内部隐藏子脚本重新触发乱下载的行为
+          set PATH=%GITHUB_WORKSPACE%;%PATH%
+          .\build.bat opencc
 
       - name: Copy Rime files
         shell: cmd
@@ -112,6 +114,7 @@ jobs:
         id: build_weasel
         shell: cmd
         run: |
+          set PATH=%GITHUB_WORKSPACE%;%PATH%
           .\build.bat data
           .\build.bat hant
           .\build.bat installer

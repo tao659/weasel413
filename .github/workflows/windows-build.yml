@@ -46,40 +46,47 @@ jobs:
             ${{ env.BOOST_ROOT }}
           key: ${{ runner.os }}-boost-${{ env.boost_version }}
 
-      - name: Pre-forge Boost 7z Archive
+      - name: Pre-download and Forge Boost Archive
         if: steps.cache-boost.outputs.cache-hit != 'true'
         shell: cmd
         run: |
-          echo === 缓存未命中，在 Actions 层接管下载，完美伪造小狼毫所需的 .7z 源码包 ===
+          echo === 缓存未命中，在 Actions 层接管下载 ===
           
           :: 1. 创建物理依赖目录并进入
           if not exist "%GITHUB_WORKSPACE%\deps" mkdir "%GITHUB_WORKSPACE%\deps"
           cd "%GITHUB_WORKSPACE%\deps"
           
-          :: 2. 🟢 下载官方 100% 真实存在的通用 .zip 源码包 (约 140MB)
+          :: 2. 下载官方 100% 真实存在的通用 .zip 源码包 (约 140MB)
           curl -L -o boost_1_78_0.zip https://github.com
           
           :: 3. 用系统自带的 7z 先把 .zip 解压出来
           7z x boost_1_78_0.zip
           
-          :: 4. 确保解压出来的根目录名称与压缩包内的路径结构保持一致 (解压出来通常是 boost_1_78_0)
+          :: 4. 确保解压出来的根目录名称一致
           if exist "boost-1.78.0" move "boost-1.78.0" "boost_1_78_0"
           
-          :: 5. 🟢 核心魔法：将解压出来的真实源码文件夹，重新打包成小狼毫脚本强行索要的 boost_1_78_0.7z 格式！
+          :: 5. 将解压出来的真实源码文件夹，打包成小狼毫脚本需要的 boost_1_78_0.7z 格式
           7z a -m0=lzma2 boost_1_78_0.7z boost_1_78_0
           
-          :: 6. 安全清理临时解压的文件夹和 zip 包，只留下小狼毫需要的那一个完美的 .7z 文件
+          :: 6. 清理临时文件夹和 zip 包
           rd /s /q boost_1_78_0
           del boost_1_78_0.zip
           
-          :: 7. 打印当前目录，此时你会看到一个真正的、约 80MB+ 的 boost_1_78_0.7z 稳稳躺在这里
-          dir
+          :: 7. 🟢 核心黑魔法：创建一个假的 aria2c.bat，阻止 install_boost.bat 内部去乱下载覆盖我们做好的包
+          :: 把它放在工作流根目录下，这样系统会优先调用它
+          cd "%GITHUB_WORKSPACE%"
+          echo @echo off > aria2c.bat
+          echo echo [Actions Mock] Skipping buggy aria2c download, using pre-downloaded 7z archive... >> aria2c.bat
+          echo exit /b 0 >> aria2c.bat
 
       - name: Install Boost
         shell: cmd
         run: |
+          :: 将当前目录（包含假的 aria2c.bat）强行加入临时环境变量 PATH 的最前面，确保截获 aria2c 调用
+          set PATH=%CD%;%PATH%
+          
           :: 执行你的 install_boost.bat
-          :: 此时由于真正的 deps/boost_1_78_0.7z 已经就绪，脚本内部的 7z 解压将 100% 成功，随后直接自动切入 Boost 的正式编译！
+          :: 此时它内部的 aria2c 命令会被我们秒杀，直接用真包进行 7z 解压并编译！
           call .\install_boost.bat
 
       - name: Check submodules
